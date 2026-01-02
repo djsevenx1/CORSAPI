@@ -214,7 +214,8 @@ async function handleProxyRequest(request, targetUrlParam, currentOrigin) {
   }
 
   let fullTargetUrl = targetUrlParam
-  const urlMatch = request.url.match(/[?&]url=([^&]+(?:&.*)?)/)
+  // 🔑 修复：只提取 url= 参数的值，不要包含后续的 & 参数
+  const urlMatch = request.url.match(/[?&]url=([^&]+)/)
   if (urlMatch) fullTargetUrl = decodeURIComponent(urlMatch[1])
 
   // 🔑 关键修复：提取并传递额外的 query 参数（如 ac=list, ac=detail 等）
@@ -242,20 +243,9 @@ async function handleProxyRequest(request, targetUrlParam, currentOrigin) {
   }
 
   try {
-    // 🔑 关键修复：过滤掉会导致问题的 headers (如 Host, Origin 等)
-    const cleanHeaders = new Headers()
-    for (const [key, value] of request.headers) {
-      const lowerKey = key.toLowerCase()
-      // 跳过会导致冲突的 headers
-      if (lowerKey !== 'host' && lowerKey !== 'origin' && lowerKey !== 'referer' &&
-          !lowerKey.startsWith('cf-') && !lowerKey.startsWith('x-forwarded-')) {
-        cleanHeaders.set(key, value)
-      }
-    }
-
     const proxyRequest = new Request(targetURL.toString(), {
       method: request.method,
-      headers: cleanHeaders,
+      headers: request.headers,
       body: request.method !== 'GET' && request.method !== 'HEAD'
         ? await request.arrayBuffer()
         : undefined,
