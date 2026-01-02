@@ -66,7 +66,34 @@ function base58Encode(obj) {
   return result
 }
 
-// JSON api 字段前缀替换
+// 🔑 从 URL 中提取唯一标识符（用于生成唯一路径）
+function extractSourceId(apiUrl) {
+  try {
+    const url = new URL(apiUrl)
+    const hostname = url.hostname
+
+    // 提取主域名作为标识符（去掉子域名和 TLD）
+    // 例如：caiji.maotaizy.cc → maotai
+    //       iqiyizyapi.com → iqiyi
+    //       api.maoyanapi.top → maoyan
+    const parts = hostname.split('.')
+
+    // 如果是 caiji.xxx.com 或 api.xxx.com 格式，取倒数第二部分
+    if (parts.length >= 3 && (parts[0] === 'caiji' || parts[0] === 'api' || parts[0] === 'cj' || parts[0] === 'www')) {
+      return parts[parts.length - 2].toLowerCase().replace(/[^a-z0-9]/g, '')
+    }
+
+    // 否则取第一部分（去掉 zyapi/zy 等后缀）
+    let name = parts[0].toLowerCase()
+    name = name.replace(/zyapi$/, '').replace(/zy$/, '').replace(/api$/, '')
+    return name.replace(/[^a-z0-9]/g, '') || 'source'
+  } catch {
+    // URL 解析失败，使用随机标识
+    return 'source' + Math.random().toString(36).substr(2, 6)
+  }
+}
+
+// JSON api 字段前缀替换（改进版：为每个源生成唯一路径）
 function addOrReplacePrefix(obj, newPrefix) {
   if (typeof obj !== 'object' || obj === null) return obj
   if (Array.isArray(obj)) return obj.map(item => addOrReplacePrefix(item, newPrefix))
@@ -74,9 +101,21 @@ function addOrReplacePrefix(obj, newPrefix) {
   for (const key in obj) {
     if (key === 'api' && typeof obj[key] === 'string') {
       let apiUrl = obj[key]
+
+      // 去掉旧的代理前缀（如果有）
       const urlIndex = apiUrl.indexOf('?url=')
       if (urlIndex !== -1) apiUrl = apiUrl.slice(urlIndex + 5)
-      if (!apiUrl.startsWith(newPrefix)) apiUrl = newPrefix + apiUrl
+
+      // 🔑 关键修改：为每个源生成唯一的路径
+      if (!apiUrl.startsWith(newPrefix)) {
+        const sourceId = extractSourceId(apiUrl)
+
+        // 从 newPrefix 中提取 origin 和基础路径
+        // 例如：https://xx.fn0.qzz.io/?url= → https://xx.fn0.qzz.io/p/iqiyi?url=
+        const baseUrl = newPrefix.replace(/\/?\?url=$/, '') // 去掉结尾的 /?url= 或 ?url=
+        apiUrl = `${baseUrl}/p/${sourceId}?url=${apiUrl}`
+      }
+
       newObj[key] = apiUrl
     } else {
       newObj[key] = addOrReplacePrefix(obj[key], newPrefix)
@@ -142,7 +181,13 @@ async function handleRequest(request) {
     return new Response('OK', { status: 200, headers: CORS_HEADERS })
   }
 
-  // 通用代理请求处理
+  // 🔑 新增：处理源专属路径 /p/{sourceId}?url=...
+  // 这样可以让 TVBox 认为每个源是不同的域名/路径
+  if (pathname.startsWith('/p/') && targetUrlParam) {
+    return handleProxyRequest(request, targetUrlParam, currentOrigin)
+  }
+
+  // 通用代理请求处理（兼容旧的 /?url=... 格式）
   if (targetUrlParam) {
     return handleProxyRequest(request, targetUrlParam, currentOrigin)
   }
